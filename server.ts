@@ -374,44 +374,75 @@ function saveBase64Image(imageData: string, filename?: string): string {
   return `/uploads/${cleanFilename}`;
 }
 
+// PRODUCT ENDPOINTS (Supports PUT, POST, PATCH, singular/plural, and auto-upsert)
+const handleUpdateProduct = (req: Request, res: Response) => {
+  const rawId = req.params.id || req.body?.id || '';
+  const id = decodeURIComponent(rawId).trim();
+  if (!id) {
+    return res.status(400).json({ error: 'ID do produto não informado.' });
+  }
+
+  const updates = { ...(req.body || {}) };
+  if (updates.photoUrl && typeof updates.photoUrl === 'string' && updates.photoUrl.startsWith('data:image')) {
+    updates.photoUrl = saveBase64Image(updates.photoUrl);
+  }
+  updates.updatedAt = Date.now();
+
+  let updated = dbInstance.updateProduct(id, updates);
+  if (!updated) {
+    // If not found in memory, upsert it to ensure changes are never lost
+    const created = dbInstance.addProduct({ ...updates, id });
+    notifyClientsMenuUpdated('product_added', created);
+    return res.status(200).json(created);
+  }
+
+  notifyClientsMenuUpdated('product_updated', updated);
+  return res.json(updated);
+};
+
+// Route aliases for maximum client compatibility
+app.put('/api/admin/products/:id', requireAdmin, handleUpdateProduct);
+app.post('/api/admin/products/:id', requireAdmin, handleUpdateProduct);
+app.patch('/api/admin/products/:id', requireAdmin, handleUpdateProduct);
+app.put('/api/admin/product/:id', requireAdmin, handleUpdateProduct);
+app.post('/api/admin/product/:id', requireAdmin, handleUpdateProduct);
+app.patch('/api/admin/product/:id', requireAdmin, handleUpdateProduct);
+app.put('/api/admin/products', requireAdmin, handleUpdateProduct);
+app.patch('/api/admin/products', requireAdmin, handleUpdateProduct);
+
 app.post('/api/admin/products', requireAdmin, (req: Request, res: Response) => {
-  const productData = req.body;
+  const productData = req.body || {};
   if (!productData.name || !productData.categoryId) {
     return res.status(400).json({ error: 'Nome e categoria são obrigatórios.' });
   }
-  if (productData.photoUrl && productData.photoUrl.startsWith('data:image')) {
+  if (productData.photoUrl && typeof productData.photoUrl === 'string' && productData.photoUrl.startsWith('data:image')) {
     productData.photoUrl = saveBase64Image(productData.photoUrl);
   }
   productData.updatedAt = Date.now();
+
+  // If product already exists with this ID, update rather than failing
+  if (productData.id && dbInstance.getProductById(productData.id)) {
+    const updated = dbInstance.updateProduct(productData.id, productData);
+    notifyClientsMenuUpdated('product_updated', updated);
+    return res.status(200).json(updated);
+  }
+
   const created = dbInstance.addProduct(productData);
   notifyClientsMenuUpdated('product_added', created);
   res.status(201).json(created);
 });
 
-app.put('/api/admin/products/:id', requireAdmin, (req: Request, res: Response) => {
-  const id = req.params.id;
-  const updates = req.body;
-  if (updates.photoUrl && updates.photoUrl.startsWith('data:image')) {
-    updates.photoUrl = saveBase64Image(updates.photoUrl);
-  }
-  updates.updatedAt = Date.now();
-  const updated = dbInstance.updateProduct(id, updates);
-  if (!updated) {
-    return res.status(404).json({ error: 'Produto não encontrado.' });
-  }
-  notifyClientsMenuUpdated('product_updated', updated);
-  res.json(updated);
-});
-
-app.delete('/api/admin/products/:id', requireAdmin, (req: Request, res: Response) => {
-  const id = req.params.id;
+const handleDeleteProduct = (req: Request, res: Response) => {
+  const rawId = req.params.id || req.body?.id || '';
+  const id = decodeURIComponent(rawId).trim();
   const success = dbInstance.deleteProduct(id);
-  if (!success) {
-    return res.status(404).json({ error: 'Produto não encontrado.' });
-  }
   notifyClientsMenuUpdated('product_deleted', { id });
   res.json({ success: true });
-});
+};
+
+app.delete('/api/admin/products/:id', requireAdmin, handleDeleteProduct);
+app.delete('/api/admin/product/:id', requireAdmin, handleDeleteProduct);
+app.delete('/api/admin/products', requireAdmin, handleDeleteProduct);
 
 app.post('/api/admin/products/reorder', requireAdmin, (req: Request, res: Response) => {
   const { orderMap } = req.body as { orderMap: { [id: string]: number } };

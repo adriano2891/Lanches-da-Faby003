@@ -176,14 +176,14 @@
       }
     ],
     "version": 2,
-    "updatedAt": 1792315794139
+    "updatedAt": 1792316920318
   },
   "products": [
     {
       "id": "lanche-completo-faby",
       "name": "Completo da Faby",
       "categoryId": "lanches",
-      "price": 1000,
+      "price": 18,
       "description": "Pão bola, hambúrguer, ovo, mussarela, presunto, alface, tomate, cebola e molho especial.",
       "ingredients": [
         "Pão bola",
@@ -217,7 +217,7 @@
         "add-frango"
       ],
       "photoUrl": "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?auto=format&fit=crop&w=600&q=80",
-      "updatedAt": 1792315715839,
+      "updatedAt": 1792316920318,
       "isDrink": false
     },
     {
@@ -795,7 +795,7 @@
       "passwordSalt": "66e7e7b58d2caf60cb226a661943d2a6",
       "recoveryKey": "FABY-E28FFFA3",
       "createdAt": "2026-10-17T07:30:14.829Z",
-      "lastLoginAt": "2026-10-18T09:29:54.086Z"
+      "lastLoginAt": "2026-10-18T09:48:40.285Z"
     }
   ],
   "sessions": {
@@ -894,6 +894,14 @@
     "b985f85f382c81d1f793ad2351d3fbb296fec40d1ea25df1086430e637c35dc9": {
       "adminId": "admin-1",
       "expiresAt": 1797499794086
+    },
+    "1e578dd357f8988a566d8c2274b896d84a4de3c54705a20cfd9d48268975476b": {
+      "adminId": "admin-1",
+      "expiresAt": 1797500609755
+    },
+    "c2c9440b7a079e4a8c5a01c1bce2fcb86a44ac8f4157019a51000b38142d2122": {
+      "adminId": "admin-1",
+      "expiresAt": 1797500920285
     }
   }
 }
