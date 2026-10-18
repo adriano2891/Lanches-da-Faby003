@@ -443,6 +443,8 @@ const handleDeleteProduct = (req: Request, res: Response) => {
 app.delete('/api/admin/products/:id', requireAdmin, handleDeleteProduct);
 app.delete('/api/admin/product/:id', requireAdmin, handleDeleteProduct);
 app.delete('/api/admin/products', requireAdmin, handleDeleteProduct);
+app.post('/api/admin/products/:id/delete', requireAdmin, handleDeleteProduct);
+app.post('/api/admin/products/delete', requireAdmin, handleDeleteProduct);
 
 app.post('/api/admin/products/reorder', requireAdmin, (req: Request, res: Response) => {
   const { orderMap } = req.body as { orderMap: { [id: string]: number } };

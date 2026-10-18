@@ -162,11 +162,17 @@ export default function App() {
     let sse: EventSource | null = null;
     let sseReconnectTimer: any = null;
 
+    let sseFailures = 0;
     const setupSSE = () => {
       if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') return;
+      if (sseFailures >= 3) return; // Fall back gracefully to visibility & polling
       try {
         const apiBase = getApiBaseUrl();
         sse = new EventSource(`${apiBase}/api/sync/events`);
+
+        sse.onopen = () => {
+          sseFailures = 0;
+        };
 
         sse.onmessage = async (event) => {
           try {
@@ -180,15 +186,16 @@ export default function App() {
         };
 
         sse.onerror = () => {
+          sseFailures += 1;
           if (sse) {
             sse.close();
             sse = null;
           }
-          if (!sseReconnectTimer) {
+          if (sseFailures < 3 && !sseReconnectTimer) {
             sseReconnectTimer = setTimeout(() => {
               sseReconnectTimer = null;
               setupSSE();
-            }, 3000);
+            }, 6000);
           }
         };
       } catch {}

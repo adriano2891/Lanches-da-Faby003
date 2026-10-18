@@ -247,12 +247,12 @@ export async function fetchMenuDataWithFallback(): Promise<MenuDataResponse> {
     const apiBase = getApiBaseUrl();
     const timestamp = Date.now();
 
-    // Prioritize direct static /api/menu.json (CDN edge-cached on Netlify and instant in Express)
+    // Query live authoritative server database endpoint first, then static /api/menu.json as fallback
     const endpointCandidates = [
-      apiBase ? `${apiBase}/api/menu.json?_t=${timestamp}` : '',
       apiBase ? `${apiBase}/api/menu?_t=${timestamp}` : '',
-      `/api/menu.json?_t=${timestamp}`,
       `/api/menu?_t=${timestamp}`,
+      apiBase ? `${apiBase}/api/menu.json?_t=${timestamp}` : '',
+      `/api/menu.json?_t=${timestamp}`,
     ].filter(Boolean);
 
     const endpoints = Array.from(new Set(endpointCandidates));

@@ -636,7 +636,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       let savedProduct: Product | null = null;
       const apiBase = getApiBaseUrl();
       const abortCtrl = new AbortController();
-      const saveTimeoutId = setTimeout(() => abortCtrl.abort(), 4000);
+      const saveTimeoutId = setTimeout(() => abortCtrl.abort(), 15000);
+      let saveErrorMsg = '';
 
       try {
         const res = await fetch(`${apiBase}/api/admin/products/${encodeURIComponent(product.id)}`, {
@@ -664,7 +665,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
         if (res.ok && isJson) {
           savedProduct = await res.json().catch(() => null);
-        } else if (res.status === 404) {
+        } else if (res.status === 404 || res.status === 405) {
           // Attempt fallback to POST /api/admin/products with ID
           try {
             const fallbackRes = await fetch(`${apiBase}/api/admin/products`, {
@@ -681,44 +682,37 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             });
             if (fallbackRes.ok && fallbackRes.headers.get('content-type')?.includes('application/json')) {
               savedProduct = await fallbackRes.json().catch(() => null);
+            } else {
+              saveErrorMsg = `Servidor respondeu com código ${fallbackRes.status}`;
             }
-          } catch {}
+          } catch (e: any) {
+            saveErrorMsg = e.message || 'Erro de rede no fallback';
+          }
+        } else {
+          const errData = await res.json().catch(() => null);
+          saveErrorMsg = errData?.error || `Erro HTTP ${res.status}`;
         }
       } catch (netErr: any) {
         clearTimeout(saveTimeoutId);
-        console.warn('Backend sync failed for photo upload, applying local update:', netErr);
+        saveErrorMsg = netErr.message || 'Tempo limite ou falha de conexão';
+        console.warn('Backend sync failed for photo upload:', netErr);
       }
 
-      // If server was offline or static host (Netlify), fall back to authoritative local product
+      // STRICT VALIDATION: Require server confirmation
       if (!savedProduct) {
-        savedProduct = {
-          ...product,
-          photoUrl: uploadedUrl,
-          updatedAt: now,
-        };
+        showToast(
+          `Falha ao gravar foto de "${product.name}" no servidor: ${saveErrorMsg}. A alteração não foi salva no banco de dados.`,
+          'error'
+        );
+        return;
       }
 
       // Purge stale image caches
       await clearProductImageCaches();
+      invalidateMenuCache();
 
-      // Merge and save to localStorage + in-memory
-      const current = getLocalMenuData();
-      const productMap = new Map<string, Product>();
-      current.products.forEach((p) => productMap.set(p.id, p));
-      products.forEach((p) => productMap.set(p.id, p));
-
-      const updatedProduct: Product = {
-        ...product,
-        ...(savedProduct || {}),
-        photoUrl: (savedProduct && savedProduct.photoUrl) || uploadedUrl,
-        updatedAt: (savedProduct && savedProduct.updatedAt) || now,
-      };
-      productMap.set(product.id, updatedProduct);
-
-      const updatedList = Array.from(productMap.values()).sort(
-        (a, b) => (a.order || 99) - (b.order || 99)
-      );
-      saveLocalMenuData({ products: updatedList });
+      // Merge and save confirmed product
+      updateLocalProduct(savedProduct.id || product.id, savedProduct);
 
       await onRefreshData();
       showToast(`Nova foto de "${product.name}" gravada e atualizada com sucesso!`, 'success');
@@ -1033,6 +1027,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
       const abortCtrl = new AbortController();
       const saveTimeoutId = setTimeout(() => abortCtrl.abort(), 15000);
+      let saveErrorDetails = '';
 
       try {
         const res = await fetch(`${getApiBaseUrl()}${url}`, {
@@ -1060,7 +1055,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
         if (res.ok && isJson) {
           savedProduct = await res.json().catch(() => null);
-        } else if (res.status === 404 && isEdit) {
+        } else if ((res.status === 404 || res.status === 405) && isEdit) {
           // Automatic fallback to POST /api/admin/products with explicit ID
           try {
             const fallbackRes = await fetch(`${getApiBaseUrl()}/api/admin/products`, {
@@ -1073,73 +1068,42 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             });
             if (fallbackRes.ok && fallbackRes.headers.get('content-type')?.includes('application/json')) {
               savedProduct = await fallbackRes.json().catch(() => null);
+            } else {
+              const fallbackErr = await fallbackRes.json().catch(() => null);
+              saveErrorDetails = fallbackErr?.error || `Código HTTP ${fallbackRes.status}`;
             }
-          } catch {}
+          } catch (fbNetErr: any) {
+            saveErrorDetails = fbNetErr.message || 'Falha de conexão com o servidor';
+          }
+        } else {
+          const errData = await res.json().catch(() => null);
+          saveErrorDetails = errData?.error || `Código HTTP ${res.status}`;
         }
       } catch (netErr: any) {
         clearTimeout(saveTimeoutId);
-        console.warn('Backend sync failed, applying authoritative local update:', netErr);
+        saveErrorDetails = netErr.message || 'Tempo limite excedido ou rede inacessível';
+        console.warn('Backend sync failed on handleSaveProduct:', netErr);
       }
 
-      // If backend is offline or on static hosting (Netlify), synthesize product locally so user data is never lost
+      // STRICT VALIDATION: Require server confirmation. Never show false success.
       if (!savedProduct) {
-        const targetId = isEdit && editingProduct?.id
-          ? editingProduct.id
-          : `prod_${now}_${Math.random().toString(36).substring(2, 6)}`;
-        savedProduct = {
-          ...(editingProduct || {}),
-          ...cleanProductData,
-          id: targetId,
-          categoryId: finalCategory,
-          order: editingProduct?.order || productData.order || 99,
-          photoUrl: cleanProductData.photoUrl || editingProduct?.photoUrl || '',
-          updatedAt: now,
-        } as Product;
+        setIsSavingProduct(false);
+        showToast(
+          `Falha ao salvar produto no servidor: ${saveErrorDetails}. As alterações NÃO foram gravadas no banco de dados. Seus dados continuam no formulário para você tentar novamente.`,
+          'error'
+        );
+        return;
       }
 
       // Purge any stale image caches from CacheStorage
       await clearProductImageCaches();
+      invalidateMenuCache();
 
       // Update local storage cache with authoritative server-confirmed data
-      const current = getLocalMenuData();
-      const productMap = new Map<string, Product>();
-      current.products.forEach((p) => productMap.set(p.id, p));
-      products.forEach((p) => productMap.set(p.id, p));
-
-      if (editingProduct && !isCreatingProduct && editingProduct.id) {
-        const existing = productMap.get(editingProduct.id) || editingProduct;
-        const finalProduct: Product = {
-          ...existing,
-          ...cleanProductData,
-          ...savedProduct,
-          categoryId: finalCategory,
-          photoUrl: savedProduct.photoUrl || cleanProductData.photoUrl || existing.photoUrl || '',
-          available: cleanProductData.available !== false,
-          allowedAdditionalIds: cleanProductData.allowedAdditionalIds,
-          updatedAt: savedProduct.updatedAt || now,
-        } as Product;
-        productMap.set(editingProduct.id, finalProduct);
-      } else {
-        const targetId = savedProduct.id || `prod_${now}_${Math.random().toString(36).substring(2, 6)}`;
-        const newProduct: Product = {
-          ...savedProduct,
-          ...cleanProductData,
-          id: targetId,
-          categoryId: finalCategory,
-          order: savedProduct.order || productMap.size + 1,
-          photoUrl: savedProduct.photoUrl || cleanProductData.photoUrl || '',
-          updatedAt: savedProduct.updatedAt || now,
-        } as Product;
-        productMap.set(targetId, newProduct);
-      }
-
-      const updatedProducts = Array.from(productMap.values()).sort(
-        (a, b) => (a.order || 99) - (b.order || 99)
-      );
-      saveLocalMenuData({ products: updatedProducts });
+      updateLocalProduct(savedProduct.id, savedProduct);
 
       const wasCreating = isCreatingProduct;
-      const productName = cleanProductData.name;
+      const productName = savedProduct.name || cleanProductData.name;
       // Close modal ONLY after confirmed server persistence
       setEditingProduct(null);
       setIsCreatingProduct(false);
@@ -1169,22 +1133,51 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   };
 
   // Confirm Product Deletion
+  // Confirm Product Deletion
   const confirmDeleteProduct = async () => {
     if (!authToken || !productToDelete) return;
     setIsDeleting(true);
     try {
+      const apiBase = getApiBaseUrl();
+      let deleteSuccess = false;
+      let errorMsg = '';
+
       try {
-        await fetch(`${getApiBaseUrl()}/api/admin/products/${productToDelete.id}`, {
+        const res = await fetch(`${apiBase}/api/admin/products/${encodeURIComponent(productToDelete.id)}`, {
           method: 'DELETE',
           headers: { Authorization: `Bearer ${authToken}` },
         });
-      } catch {
-        // Fallback for Netlify / static host
+
+        if (res.ok) {
+          deleteSuccess = true;
+        } else if (res.status === 404 || res.status === 405) {
+          // Fallback POST alias for environments restricting DELETE
+          const postRes = await fetch(`${apiBase}/api/admin/products/${encodeURIComponent(productToDelete.id)}/delete`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${authToken}` },
+          });
+          if (postRes.ok) {
+            deleteSuccess = true;
+          } else {
+            errorMsg = `Código HTTP ${postRes.status}`;
+          }
+        } else {
+          const errData = await res.json().catch(() => null);
+          errorMsg = errData?.error || `Código HTTP ${res.status}`;
+        }
+      } catch (netErr: any) {
+        errorMsg = netErr.message || 'Falha de conexão com o servidor';
+      }
+
+      if (!deleteSuccess) {
+        showToast(`Falha ao remover produto no servidor: ${errorMsg}. A alteração não foi salva.`, 'error');
+        return;
       }
 
       const current = getLocalMenuData();
       const updatedProducts = current.products.filter((p) => p.id !== productToDelete.id);
       saveLocalMenuData({ products: updatedProducts });
+      invalidateMenuCache();
 
       const deletedName = productToDelete.name;
       setProductToDelete(null);
@@ -1201,8 +1194,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleToggleProductAvailability = async (product: Product) => {
     if (!authToken) return;
     try {
+      const apiBase = getApiBaseUrl();
+      let toggleSuccess = false;
+      let errorMsg = '';
+
       try {
-        await fetch(`${getApiBaseUrl()}/api/admin/products/${product.id}`, {
+        const res = await fetch(`${apiBase}/api/admin/products/${encodeURIComponent(product.id)}`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
@@ -1210,8 +1207,34 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           },
           body: JSON.stringify({ available: !product.available }),
         });
-      } catch {
-        // Fallback for Netlify / static host
+
+        if (res.ok) {
+          toggleSuccess = true;
+        } else if (res.status === 404 || res.status === 405) {
+          const fallbackRes = await fetch(`${apiBase}/api/admin/products`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${authToken}`,
+            },
+            body: JSON.stringify({ id: product.id, available: !product.available }),
+          });
+          if (fallbackRes.ok) {
+            toggleSuccess = true;
+          } else {
+            errorMsg = `Código HTTP ${fallbackRes.status}`;
+          }
+        } else {
+          const errData = await res.json().catch(() => null);
+          errorMsg = errData?.error || `Código HTTP ${res.status}`;
+        }
+      } catch (netErr: any) {
+        errorMsg = netErr.message || 'Falha de conexão com o servidor';
+      }
+
+      if (!toggleSuccess) {
+        showToast(`Falha ao atualizar disponibilidade no servidor: ${errorMsg}`, 'error');
+        return;
       }
 
       const current = getLocalMenuData();
@@ -1219,14 +1242,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         p.id === product.id ? { ...p, available: !p.available } : p
       );
       saveLocalMenuData({ products: updatedProducts });
+      invalidateMenuCache();
 
       await onRefreshData();
       showToast(
         `Produto "${product.name}" agora está ${!product.available ? 'Disponível' : 'Esgotado'}.`,
         'success'
       );
-    } catch (e) {
-      console.warn(e);
+    } catch (e: any) {
+      showToast(`Erro ao atualizar disponibilidade: ${e.message}`, 'error');
     }
   };
 
@@ -1234,9 +1258,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleSaveAdditional = async (addData: Partial<Additional>) => {
     if (!authToken) return;
     try {
+      const apiBase = getApiBaseUrl();
+      let savedAdd: Additional | null = null;
+      let addError = '';
+
       try {
         if (editingAdditional && !isCreatingAdditional) {
-          await fetch(`/api/admin/additionals/${editingAdditional.id}`, {
+          const res = await fetch(`${apiBase}/api/admin/additionals/${encodeURIComponent(editingAdditional.id)}`, {
             method: 'PUT',
             headers: {
               'Content-Type': 'application/json',
@@ -1244,8 +1272,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             },
             body: JSON.stringify(addData),
           });
+          if (res.ok) {
+            savedAdd = await res.json().catch(() => null);
+          } else {
+            const errData = await res.json().catch(() => null);
+            addError = errData?.error || `Código HTTP ${res.status}`;
+          }
         } else {
-          await fetch('/api/admin/additionals', {
+          const res = await fetch(`${apiBase}/api/admin/additionals`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -1253,9 +1287,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             },
             body: JSON.stringify(addData),
           });
+          if (res.ok) {
+            savedAdd = await res.json().catch(() => null);
+          } else {
+            const errData = await res.json().catch(() => null);
+            addError = errData?.error || `Código HTTP ${res.status}`;
+          }
         }
-      } catch {
-        // Fallback for Netlify / static host
+      } catch (netErr: any) {
+        addError = netErr.message || 'Falha de conexão com o servidor';
+      }
+
+      if (!savedAdd) {
+        showToast(`Falha ao gravar adicional no servidor: ${addError}`, 'error');
+        return;
       }
 
       const current = getLocalMenuData();
@@ -1263,20 +1308,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
       if (editingAdditional && !isCreatingAdditional) {
         updatedAdds = updatedAdds.map((a) =>
-          a.id === editingAdditional.id ? ({ ...a, ...addData } as Additional) : a
+          a.id === editingAdditional.id ? ({ ...a, ...savedAdd } as Additional) : a
         );
       } else {
-        const newAdd: Additional = {
-          id: `add_${Date.now()}`,
-          name: addData.name || 'Novo Adicional',
-          price: addData.price || 0,
-          maxQuantity: addData.maxQuantity || 3,
-          active: addData.active !== false,
-        };
-        updatedAdds.push(newAdd);
+        updatedAdds.push(savedAdd);
       }
 
       saveLocalMenuData({ additionals: updatedAdds });
+      invalidateMenuCache();
 
       setEditingAdditional(null);
       setIsCreatingAdditional(false);
@@ -1285,8 +1324,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         isCreatingAdditional ? 'Adicional criado com sucesso!' : 'Adicional atualizado com sucesso!',
         'success'
       );
-    } catch (e) {
-      console.warn(e);
+    } catch (e: any) {
+      showToast(`Erro ao salvar adicional: ${e.message}`, 'error');
     }
   };
 
@@ -1303,18 +1342,34 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     if (!authToken || !additionalToDelete) return;
     setIsDeleting(true);
     try {
+      const apiBase = getApiBaseUrl();
+      let deleteSuccess = false;
+      let errorMsg = '';
+
       try {
-        await fetch(`/api/admin/additionals/${additionalToDelete.id}`, {
+        const res = await fetch(`${apiBase}/api/admin/additionals/${encodeURIComponent(additionalToDelete.id)}`, {
           method: 'DELETE',
           headers: { Authorization: `Bearer ${authToken}` },
         });
-      } catch {
-        // Fallback for Netlify / static host
+        if (res.ok) {
+          deleteSuccess = true;
+        } else {
+          const errData = await res.json().catch(() => null);
+          errorMsg = errData?.error || `Código HTTP ${res.status}`;
+        }
+      } catch (netErr: any) {
+        errorMsg = netErr.message || 'Falha de conexão com o servidor';
+      }
+
+      if (!deleteSuccess) {
+        showToast(`Falha ao remover adicional no servidor: ${errorMsg}`, 'error');
+        return;
       }
 
       const current = getLocalMenuData();
       const updatedAdds = current.additionals.filter((a) => a.id !== additionalToDelete.id);
       saveLocalMenuData({ additionals: updatedAdds });
+      invalidateMenuCache();
 
       const deletedName = additionalToDelete.name;
       setAdditionalToDelete(null);
@@ -1331,8 +1386,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleToggleAdditional = async (add: Additional) => {
     if (!authToken) return;
     try {
+      const apiBase = getApiBaseUrl();
+      let toggleSuccess = false;
+      let errorMsg = '';
+
       try {
-        await fetch(`/api/admin/additionals/${add.id}`, {
+        const res = await fetch(`${apiBase}/api/admin/additionals/${encodeURIComponent(add.id)}`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
@@ -1340,8 +1399,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           },
           body: JSON.stringify({ active: !add.active }),
         });
-      } catch {
-        // Fallback for Netlify / static host
+        if (res.ok) {
+          toggleSuccess = true;
+        } else {
+          const errData = await res.json().catch(() => null);
+          errorMsg = errData?.error || `Código HTTP ${res.status}`;
+        }
+      } catch (netErr: any) {
+        errorMsg = netErr.message || 'Falha de conexão com o servidor';
+      }
+
+      if (!toggleSuccess) {
+        showToast(`Falha ao atualizar adicional no servidor: ${errorMsg}`, 'error');
+        return;
       }
 
       const current = getLocalMenuData();
@@ -1349,10 +1419,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         a.id === add.id ? { ...a, active: !a.active } : a
       );
       saveLocalMenuData({ additionals: updatedAdds });
+      invalidateMenuCache();
 
       await onRefreshData();
-    } catch (e) {
-      console.warn(e);
+    } catch (e: any) {
+      showToast(`Erro ao alternar adicional: ${e.message}`, 'error');
     }
   };
 

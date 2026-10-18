@@ -15,26 +15,12 @@ export function getProductImageUrl(
   size: ImageSize = 'thumbnail'
 ): string {
   if (!photoUrl || typeof photoUrl !== 'string') return '';
-  let clean = photoUrl.trim();
+  const clean = photoUrl.trim();
   if (!clean) return '';
 
   // Data URLs and blob URLs do not require cache busting or remote resizing
   if (clean.startsWith('data:') || clean.startsWith('blob:')) {
     return clean;
-  }
-
-  // Optimize Unsplash images dynamically according to display size
-  if (clean.includes('images.unsplash.com')) {
-    const widthParam = size === 'thumbnail' ? 'w=300&q=75' : size === 'medium' ? 'w=500&q=80' : 'w=900&q=85';
-    // Remove existing width, height and quality query parameters
-    clean = clean
-      .replace(/[?&]w=\d+/g, '')
-      .replace(/[?&]h=\d+/g, '')
-      .replace(/[?&]q=\d+/g, '')
-      .replace(/[?&]auto=[^&]*/g, '');
-
-    const separator = clean.includes('?') ? '&' : '?';
-    clean = `${clean}${separator}${widthParam}&auto=format&fit=crop`;
   }
 
   // If pointing to the default official logo in PNG, prefer WebP when available
@@ -45,15 +31,32 @@ export function getProductImageUrl(
     return '/logo_oficial.webp';
   }
 
-  // Append or replace cache-busting timestamp query parameter
+  const v = updatedAt && Number(updatedAt) > 0 ? String(updatedAt) : 'v1';
+
   try {
-    const v = updatedAt && Number(updatedAt) > 0 ? String(updatedAt) : 'v3';
-    const separator = clean.includes('?') ? '&' : '?';
-    // If it already has a v= parameter, replace it
-    if (/[?&]v=[^&#]*/.test(clean)) {
-      return clean.replace(/([?&]v=)[^&#]*/, `$1${v}`);
+    if (clean.includes('images.unsplash.com')) {
+      const u = new URL(clean);
+      const width = size === 'thumbnail' ? '300' : size === 'medium' ? '500' : '900';
+      const quality = size === 'thumbnail' ? '75' : size === 'medium' ? '80' : '85';
+      u.searchParams.set('w', width);
+      u.searchParams.set('q', quality);
+      u.searchParams.set('auto', 'format');
+      u.searchParams.set('fit', 'crop');
+      u.searchParams.set('v', v);
+      return u.toString();
     }
-    return `${clean}${separator}v=${v}`;
+
+    if (clean.startsWith('http://') || clean.startsWith('https://')) {
+      const u = new URL(clean);
+      u.searchParams.set('v', v);
+      return u.toString();
+    }
+
+    // Relative path (like /uploads/photo.jpg)
+    const [pathPart, queryPart] = clean.split('?');
+    const params = new URLSearchParams(queryPart || '');
+    params.set('v', v);
+    return `${pathPart}?${params.toString()}`;
   } catch {
     return clean;
   }
