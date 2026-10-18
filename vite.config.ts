@@ -56,8 +56,15 @@ export default defineConfig(() => {
           skipWaiting: true,
           clientsClaim: true,
           globPatterns: ['**/*.{js,css,html,ico,svg,woff,woff2}'],
+          ignoreURLParametersMatching: [],
           runtimeCaching: [
             {
+              // Dynamic API routes must NEVER be served from cache
+              urlPattern: ({ url }) => url.pathname.startsWith('/api/'),
+              handler: 'NetworkOnly',
+            },
+            {
+              // Product images and uploads: always try network first for newest image, fallback to cache offline
               urlPattern: ({ request, url }) =>
                 request.destination === 'image' ||
                 url.pathname.startsWith('/uploads/') ||
@@ -65,15 +72,19 @@ export default defineConfig(() => {
                 url.pathname.endsWith('.jpg') ||
                 url.pathname.endsWith('.jpeg') ||
                 url.pathname.endsWith('.webp'),
-              handler: 'StaleWhileRevalidate',
+              handler: 'NetworkFirst',
               options: {
+                networkTimeoutSeconds: 2,
                 cacheName: 'product-images-cache',
                 expiration: {
                   maxEntries: 150,
-                  maxAgeSeconds: 60 * 60 * 24, // 24 hours
+                  maxAgeSeconds: 60 * 60 * 12, // 12 hours
                 },
                 cacheableResponse: {
                   statuses: [0, 200],
+                },
+                matchOptions: {
+                  ignoreSearch: false,
                 },
               },
             },

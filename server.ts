@@ -206,12 +206,123 @@ app.post('/api/admin/change-password', requireAdmin, (req: Request, res: Respons
   res.json({ success: true, message: 'Senha alterada com sucesso.' });
 });
 
+// Multi-device real-time sync broadcaster
+const sseClients = new Set<Response>();
+
+function notifyClientsMenuUpdated(reason: string, details?: any) {
+  const payload = JSON.stringify({
+    type: 'menu_updated',
+    reason,
+    details,
+    updatedAt: Date.now(),
+  });
+  for (const client of Array.from(sseClients)) {
+    try {
+      client.write(`data: ${payload}\n\n`);
+    } catch {
+      sseClients.delete(client);
+    }
+  }
+}
+
+// Keep-alive heartbeat every 20s to maintain open mobile/desktop connections
+setInterval(() => {
+  for (const client of Array.from(sseClients)) {
+    try {
+      client.write(': keepalive\n\n');
+    } catch {
+      sseClients.delete(client);
+    }
+  }
+}, 20000);
+
+// Real-time synchronization events (SSE) for all open mobile and desktop pages
+app.get('/api/sync/events', (req: Request, res: Response) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+    'Access-Control-Allow-Origin': '*',
+  });
+  if (typeof (res as any).flushHeaders === 'function') {
+    (res as any).flushHeaders();
+  }
+  res.write(`data: ${JSON.stringify({ type: 'connected', updatedAt: Date.now() })}\n\n`);
+  sseClients.add(res);
+
+  req.on('close', () => {
+    sseClients.delete(res);
+  });
+});
+
+// Lightweight version check endpoint for polling or quick client validation
+app.get('/api/sync/version', (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  const cfg = dbInstance.getConfig();
+  res.json({
+    updatedAt: cfg.updatedAt || Date.now(),
+    version: cfg.version || 2,
+    productCount: dbInstance.getProducts().length,
+  });
+});
+
+// Public categories list
+app.get('/api/categories', (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.json({
+    categories: dbInstance.getCategories(),
+    customCategories: dbInstance.getConfig().customCategories || [],
+  });
+});
+
 // PROTECTED ADMIN DATA MANAGEMENT ROUTES
 
 app.put('/api/admin/config', requireAdmin, (req: Request, res: Response) => {
   const updates = req.body;
   const updatedConfig = dbInstance.updateConfig(updates);
+  notifyClientsMenuUpdated('config_updated');
   res.json(updatedConfig);
+});
+
+// Category Management Routes
+app.post('/api/admin/categories', requireAdmin, (req: Request, res: Response) => {
+  try {
+    const { name } = req.body;
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'Nome da categoria é obrigatório.' });
+    }
+    const created = dbInstance.addCategory(name.trim());
+    notifyClientsMenuUpdated('category_added', created);
+    res.status(201).json({
+      success: true,
+      category: created,
+      categories: dbInstance.getCategories(),
+      config: dbInstance.getConfig(),
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Erro ao adicionar categoria.' });
+  }
+});
+
+app.delete('/api/admin/categories/:id', requireAdmin, (req: Request, res: Response) => {
+  try {
+    const id = req.params.id;
+    const success = dbInstance.removeCategory(id);
+    if (!success) {
+      return res.status(404).json({ error: 'Categoria não encontrada ou já removida.' });
+    }
+    notifyClientsMenuUpdated('category_deleted', { id });
+    res.json({
+      success: true,
+      categories: dbInstance.getCategories(),
+      config: dbInstance.getConfig(),
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Erro ao remover categoria.' });
+  }
 });
 
 // Reusable helper to write base64 image data to public/uploads (and dist/uploads)
@@ -273,6 +384,7 @@ app.post('/api/admin/products', requireAdmin, (req: Request, res: Response) => {
   }
   productData.updatedAt = Date.now();
   const created = dbInstance.addProduct(productData);
+  notifyClientsMenuUpdated('product_added', created);
   res.status(201).json(created);
 });
 
@@ -287,6 +399,7 @@ app.put('/api/admin/products/:id', requireAdmin, (req: Request, res: Response) =
   if (!updated) {
     return res.status(404).json({ error: 'Produto não encontrado.' });
   }
+  notifyClientsMenuUpdated('product_updated', updated);
   res.json(updated);
 });
 
@@ -296,6 +409,7 @@ app.delete('/api/admin/products/:id', requireAdmin, (req: Request, res: Response
   if (!success) {
     return res.status(404).json({ error: 'Produto não encontrado.' });
   }
+  notifyClientsMenuUpdated('product_deleted', { id });
   res.json({ success: true });
 });
 
@@ -307,7 +421,9 @@ app.post('/api/admin/products/reorder', requireAdmin, (req: Request, res: Respon
   for (const [id, order] of Object.entries(orderMap)) {
     dbInstance.updateProduct(id, { order });
   }
-  res.json({ success: true, products: dbInstance.getProducts() });
+  const products = dbInstance.getProducts();
+  notifyClientsMenuUpdated('products_reordered');
+  res.json({ success: true, products });
 });
 
 app.post('/api/admin/additionals', requireAdmin, (req: Request, res: Response) => {
@@ -316,6 +432,7 @@ app.post('/api/admin/additionals', requireAdmin, (req: Request, res: Response) =
     return res.status(400).json({ error: 'Nome e preço são obrigatórios.' });
   }
   const created = dbInstance.addAdditional(addData);
+  notifyClientsMenuUpdated('additional_added', created);
   res.status(201).json(created);
 });
 
@@ -326,6 +443,7 @@ app.put('/api/admin/additionals/:id', requireAdmin, (req: Request, res: Response
   if (!updated) {
     return res.status(404).json({ error: 'Adicional não encontrado.' });
   }
+  notifyClientsMenuUpdated('additional_updated', updated);
   res.json(updated);
 });
 
@@ -335,6 +453,7 @@ app.delete('/api/admin/additionals/:id', requireAdmin, (req: Request, res: Respo
   if (!success) {
     return res.status(404).json({ error: 'Adicional não encontrado.' });
   }
+  notifyClientsMenuUpdated('additional_deleted', { id });
   res.json({ success: true });
 });
 
@@ -389,9 +508,9 @@ async function startServer() {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
   app.use('/uploads', express.static(uploadsDir, {
-    maxAge: '1d',
+    maxAge: '1m',
     setHeaders: (res) => {
-      res.setHeader('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
+      res.setHeader('Cache-Control', 'public, max-age=60, must-revalidate');
     },
   }));
 

@@ -62,7 +62,7 @@ export function normalizeCategoryKey(key?: string): string {
   }
 }
 
-export function formatCategoryLabel(key: string): string {
+export function formatCategoryLabel(key: string, customCategories?: any[]): string {
   const clean = (key || '').toLowerCase().trim();
   switch (clean) {
     case 'todos':
@@ -75,11 +75,22 @@ export function formatCategoryLabel(key: string): string {
       return 'Sopas e Canjas';
     case 'bebidas':
       return 'Sucos e Vitaminas';
-    default:
+    default: {
+      if (customCategories && Array.isArray(customCategories)) {
+        const found = customCategories.find((c) => {
+          if (!c) return false;
+          if (typeof c === 'string') return normalizeCategoryKey(c) === normalizeCategoryKey(clean);
+          return normalizeCategoryKey(c.id || c.name) === normalizeCategoryKey(clean);
+        });
+        if (found) {
+          return typeof found === 'string' ? found : (found.name || found.label || clean);
+        }
+      }
       return clean
         .split(/[-_ ]+/)
         .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
         .join(' ');
+    }
   }
 }
 

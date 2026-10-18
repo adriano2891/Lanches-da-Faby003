@@ -1,7 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import type { StoreConfig, Product, Additional } from '../types.js';
+import type { StoreConfig, Product, Additional } from '../types.ts';
+import { normalizeCategoryKey, formatCategoryLabel, parseCustomCategories } from '../utils/formatters.ts';
 
 export interface AdminUser {
   id: string;
@@ -445,9 +446,91 @@ class Database {
   }
 
   public updateConfig(newConfig: Partial<StoreConfig>): StoreConfig {
-    this.data.config = { ...this.data.config, ...newConfig };
+    let customCategories = this.data.config.customCategories;
+    if (newConfig.customCategories !== undefined) {
+      customCategories = parseCustomCategories(newConfig.customCategories);
+    }
+    this.data.config = {
+      ...this.data.config,
+      ...newConfig,
+      customCategories,
+      updatedAt: Date.now(),
+    };
     this.saveData(this.data);
     return this.data.config;
+  }
+
+  public getCategories(): { id: string; name: string }[] {
+    const base = [
+      { id: 'lanches', name: 'Lanches' },
+      { id: 'cuscuz', name: 'Cuscuz' },
+      { id: 'sopas', name: 'Sopas e Canjas' },
+      { id: 'bebidas', name: 'Sucos e Vitaminas' },
+    ];
+    const custom = parseCustomCategories(this.data.config.customCategories);
+    const map = new Map<string, string>();
+    base.forEach(b => map.set(b.id, b.name));
+    custom.forEach(c => map.set(c.id, c.name));
+
+    // Also include any custom categories that products might have
+    this.data.products.forEach(p => {
+      const cat = normalizeCategoryKey(p.categoryId);
+      if (!map.has(cat)) {
+        map.set(cat, formatCategoryLabel(cat));
+      }
+    });
+
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
+  }
+
+  public addCategory(name: string): { id: string; name: string } {
+    const cleanName = (name || '').trim();
+    if (!cleanName) {
+      throw new Error('Nome da categoria é obrigatório.');
+    }
+    const id = normalizeCategoryKey(cleanName);
+    if (id === 'todos') {
+      throw new Error('O identificador "todos" é reservado pelo sistema.');
+    }
+
+    const currentCustom = parseCustomCategories(this.data.config.customCategories);
+    const existingIndex = currentCustom.findIndex(c => c.id === id);
+
+    const categoryObj = { id, name: cleanName };
+
+    if (existingIndex > -1) {
+      currentCustom[existingIndex] = categoryObj;
+    } else {
+      currentCustom.push(categoryObj);
+    }
+
+    this.data.config.customCategories = currentCustom;
+    this.data.config.updatedAt = Date.now();
+    this.saveData(this.data);
+    return categoryObj;
+  }
+
+  public removeCategory(catId: string): boolean {
+    const id = normalizeCategoryKey(catId);
+    if (['lanches', 'cuscuz', 'sopas', 'bebidas', 'todos'].includes(id)) {
+      throw new Error('Não é permitido remover categorias padrão do cardápio.');
+    }
+
+    const count = this.data.products.filter(p => normalizeCategoryKey(p.categoryId) === id).length;
+    if (count > 0) {
+      throw new Error(`Não é possível remover: existem ${count} produto(s) nesta categoria.`);
+    }
+
+    const currentCustom = parseCustomCategories(this.data.config.customCategories);
+    const filtered = currentCustom.filter(c => c.id !== id);
+
+    if (filtered.length !== currentCustom.length) {
+      this.data.config.customCategories = filtered;
+      this.data.config.updatedAt = Date.now();
+      this.saveData(this.data);
+      return true;
+    }
+    return false;
   }
 
   public getProducts(): Product[] {

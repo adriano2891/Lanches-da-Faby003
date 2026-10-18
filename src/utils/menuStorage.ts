@@ -2,6 +2,7 @@ import type { StoreConfig, Product, Additional, StoreStatus } from '../types.ts'
 import { DEFAULT_CONFIG, DEFAULT_PRODUCTS, DEFAULT_ADDITIONALS } from '../data/defaultMenuData.ts';
 import { computeStoreStatus } from './statusHelper.ts';
 import { saveImageToIndexedDb, getImageFromIndexedDb } from './imageDb.ts';
+import { normalizeCategoryKey, formatCategoryLabel, parseCustomCategories } from './formatters.ts';
 
 export const CURRENT_DATA_VERSION = 2;
 const LOCAL_MENU_DATA_KEY = 'faby_menu_data_v2';
@@ -18,6 +19,10 @@ export interface MenuDataResponse {
 
 // In-memory cache to guarantee instant synchronization across views
 let inMemoryCache: { config: StoreConfig; products: Product[]; additionals: Additional[] } | null = null;
+
+export function invalidateMenuCache() {
+  inMemoryCache = null;
+}
 
 /**
  * Get configured API Base URL (if user configured a custom backend, e.g. Render/Cloud Run, or VITE_API_URL)
@@ -108,8 +113,14 @@ export function getLocalMenuData(): { config: StoreConfig; products: Product[]; 
           (a, b) => (a.order || 99) - (b.order || 99)
         );
 
+        const finalCustomCats = parseCustomCategories(parsed.config.customCategories);
         const result = {
-          config: { ...DEFAULT_CONFIG, ...parsed.config, version: CURRENT_DATA_VERSION },
+          config: {
+            ...DEFAULT_CONFIG,
+            ...parsed.config,
+            customCategories: finalCustomCats,
+            version: CURRENT_DATA_VERSION,
+          },
           products: mergedProducts,
           additionals: parsed.additionals.length > 0 ? parsed.additionals : DEFAULT_ADDITIONALS,
         };
@@ -139,9 +150,28 @@ export function saveLocalMenuData(data: {
   additionals?: Additional[];
 }) {
   const current = getLocalMenuData();
+  const currentCustom = parseCustomCategories(current.config?.customCategories);
+  const incomingCustom = data.config && data.config.customCategories !== undefined
+    ? parseCustomCategories(data.config.customCategories)
+    : currentCustom;
+
+  // Merge any categories from products or incoming data so nothing is ever lost
+  const categoryMap = new Map<string, string>();
+  currentCustom.forEach((c) => categoryMap.set(c.id, c.name));
+  incomingCustom.forEach((c) => categoryMap.set(c.id, c.name));
+  (data.products || current.products).forEach((p) => {
+    const cat = normalizeCategoryKey(p.categoryId);
+    if (!['lanches', 'cuscuz', 'sopas', 'bebidas', 'todos'].includes(cat) && !categoryMap.has(cat)) {
+      categoryMap.set(cat, formatCategoryLabel(cat));
+    }
+  });
+
+  const finalCustom = Array.from(categoryMap.entries()).map(([id, name]) => ({ id, name }));
+
   const updated = {
     config: {
       ...(data.config || current.config),
+      customCategories: finalCustom,
       version: CURRENT_DATA_VERSION,
       updatedAt: Date.now(),
     },
@@ -249,34 +279,44 @@ export async function fetchMenuDataWithFallback(): Promise<MenuDataResponse> {
             const serverProducts = data.products as Product[];
             const serverIds = new Set(serverProducts.map((p) => p.id));
 
-            // CRITICAL: Merge products using updatedAt timestamp!
-            // If the user modified a product locally (e.g. uploaded a new photo or edited description),
-            // NEVER overwrite it with an older copy from static JSON!
+            // Central Shared Truth: The central server database is authoritative across all devices.
+            // Products, prices, descriptions, and photos from the server replace any outdated local copies.
             const local = getLocalMenuData();
-            const localMap = new Map((local.products || []).map((p) => [p.id, p]));
+            const mergedProducts: Product[] = [...serverProducts];
 
-            const mergedProducts: Product[] = serverProducts.map((serverProd) => {
-              const localProd = localMap.get(serverProd.id);
-              if (localProd && (localProd.updatedAt || 0) > (serverProd.updatedAt || 0)) {
-                return localProd;
-              }
-              return serverProd;
-            });
-
-            // Retain any custom offline-created products not present in server
+            // Retain any custom offline-created draft products not yet synced to server
             (local.products || []).forEach((localProd) => {
-              if (localProd.id && !serverIds.has(localProd.id)) {
+              if (localProd && localProd.id && !serverIds.has(localProd.id)) {
                 mergedProducts.push(localProd);
               }
             });
 
             mergedProducts.sort((a, b) => (a.order || 99) - (b.order || 99));
 
+            // Intelligently merge custom categories so no active or newly created category is lost
+            const categoryMap = new Map<string, string>();
+            parseCustomCategories(data.config?.customCategories).forEach((c) => {
+              categoryMap.set(c.id, c.name);
+            });
+            parseCustomCategories(local.config?.customCategories).forEach((c) => {
+              if (!categoryMap.has(c.id)) {
+                categoryMap.set(c.id, c.name);
+              }
+            });
+            mergedProducts.forEach((p) => {
+              const cat = normalizeCategoryKey(p.categoryId);
+              if (!['lanches', 'cuscuz', 'sopas', 'bebidas', 'todos'].includes(cat) && !categoryMap.has(cat)) {
+                categoryMap.set(cat, formatCategoryLabel(cat));
+              }
+            });
+            const mergedCustomCategories = Array.from(categoryMap.entries()).map(([id, name]) => ({ id, name }));
+
             const finalConfig = {
               ...DEFAULT_CONFIG,
               ...data.config,
+              customCategories: mergedCustomCategories,
               version: CURRENT_DATA_VERSION,
-              updatedAt: data.config.updatedAt || timestamp,
+              updatedAt: data.config?.updatedAt || Date.now(),
             };
 
             const finalAdditionals =

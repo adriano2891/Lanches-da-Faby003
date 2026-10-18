@@ -17,7 +17,8 @@ const PhotoZoomModal = React.lazy(() => import('./components/PhotoZoomModal.tsx'
 const CartDrawer = React.lazy(() => import('./components/CartDrawer.tsx').then((m) => ({ default: m.CartDrawer })));
 const AdminPanel = React.lazy(() => import('./components/admin/AdminPanel.tsx').then((m) => ({ default: m.AdminPanel })));
 
-import { fetchMenuDataWithFallback, getLocalMenuData } from './utils/menuStorage.ts';
+import { fetchMenuDataWithFallback, getLocalMenuData, invalidateMenuCache, getApiBaseUrl } from './utils/menuStorage.ts';
+import { clearProductImageCaches } from './utils/imageUrl.ts';
 import { computeStoreStatus } from './utils/statusHelper.ts';
 import { normalizeCategoryKey } from './utils/formatters.ts';
 import { formatCategoryLabel } from './components/CategoryNav.tsx';
@@ -131,6 +132,7 @@ export default function App() {
   // Fetch full menu from server with automatic Netlify/offline fallback
   const fetchMenuData = useCallback(async (targetCategory?: string) => {
     try {
+      invalidateMenuCache();
       const data = await fetchMenuDataWithFallback();
       setConfig(data.config);
       setProducts(data.products || []);
@@ -149,12 +151,90 @@ export default function App() {
     }
   }, []);
 
+  // Multi-device real-time synchronization:
+  // 1. Server-Sent Events (SSE) for instantaneous push across all open mobile & desktop pages
+  // 2. Tab wake-up & window focus (unlocking mobile phone or switching tabs)
+  // 3. Fallback lightweight version poll every 4 seconds
   useEffect(() => {
     fetchMenuData();
-    // Poll store status every 60 seconds
-    const interval = setInterval(fetchMenuData, 60000);
+
+    // 1. Server-Sent Events listener for instant multi-device push
+    let sse: EventSource | null = null;
+    let sseReconnectTimer: any = null;
+
+    const setupSSE = () => {
+      if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') return;
+      try {
+        const apiBase = getApiBaseUrl();
+        sse = new EventSource(`${apiBase}/api/sync/events`);
+
+        sse.onmessage = async (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data && data.type === 'menu_updated') {
+              await clearProductImageCaches();
+              invalidateMenuCache();
+              fetchMenuData();
+            }
+          } catch {}
+        };
+
+        sse.onerror = () => {
+          if (sse) {
+            sse.close();
+            sse = null;
+          }
+          if (!sseReconnectTimer) {
+            sseReconnectTimer = setTimeout(() => {
+              sseReconnectTimer = null;
+              setupSSE();
+            }, 3000);
+          }
+        };
+      } catch {}
+    };
+
+    setupSSE();
+
+    // 2. Refresh immediately when mobile screen wakes up or user returns to tab
+    const handleVisibilityOrFocus = async () => {
+      if (document.visibilityState === 'visible') {
+        await clearProductImageCaches();
+        invalidateMenuCache();
+        fetchMenuData();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    window.addEventListener('online', handleVisibilityOrFocus);
+
+    // 3. Periodic fallback poll every 4 seconds (checks /api/sync/version to ensure sync even if SSE is interrupted)
+    let lastKnownUpdatedAt = 0;
+    const pollInterval = setInterval(async () => {
+      if (document.visibilityState !== 'visible') return;
+      try {
+        const apiBase = getApiBaseUrl();
+        const res = await fetch(`${apiBase}/api/sync/version?_t=${Date.now()}`, {
+          cache: 'no-store',
+          headers: { 'Cache-Control': 'no-cache' },
+        });
+        if (res.ok) {
+          const info = await res.json();
+          if (info && info.updatedAt && info.updatedAt > lastKnownUpdatedAt) {
+            if (lastKnownUpdatedAt > 0) {
+              await clearProductImageCaches();
+              invalidateMenuCache();
+              fetchMenuData();
+            }
+            lastKnownUpdatedAt = info.updatedAt;
+          }
+        }
+      } catch {}
+    }, 4000);
 
     const handleMenuUpdated = () => {
+      invalidateMenuCache();
       fetchMenuData();
     };
 
@@ -162,7 +242,12 @@ export default function App() {
     window.addEventListener('storage', handleMenuUpdated);
 
     return () => {
-      clearInterval(interval);
+      if (sse) sse.close();
+      if (sseReconnectTimer) clearTimeout(sseReconnectTimer);
+      clearInterval(pollInterval);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      window.removeEventListener('online', handleVisibilityOrFocus);
       window.removeEventListener('faby_menu_updated', handleMenuUpdated);
       window.removeEventListener('storage', handleMenuUpdated);
     };
@@ -422,7 +507,7 @@ export default function App() {
             <h3 className="text-lg font-bold text-stone-800">
               {searchTerm
                 ? 'Nenhum produto encontrado'
-                : `Nenhum produto em "${formatCategoryLabel(selectedCategory)}" ainda`}
+                : `Nenhum produto em "${formatCategoryLabel(selectedCategory, config?.customCategories)}" ainda`}
             </h3>
             <p className="text-sm text-stone-500 max-w-sm mx-auto leading-relaxed">
               {searchTerm

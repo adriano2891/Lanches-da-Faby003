@@ -169,9 +169,14 @@
       "lanche-completo-faby",
       "lanche-x-tudo"
     ],
-    "customCategories": [],
+    "customCategories": [
+      {
+        "id": "porcoes",
+        "name": "Porções"
+      }
+    ],
     "version": 2,
-    "updatedAt": 1792298814970
+    "updatedAt": 1792315794139
   },
   "products": [
     {
@@ -212,7 +217,7 @@
         "add-frango"
       ],
       "photoUrl": "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?auto=format&fit=crop&w=600&q=80",
-      "updatedAt": 1792298814970,
+      "updatedAt": 1792315715839,
       "isDrink": false
     },
     {
@@ -304,7 +309,7 @@
       "name": "X-Bacon",
       "categoryId": "lanches",
       "price": 1500,
-      "description": "Pão bola, hambúrguer, ovo, mussarela, presunto, bacon, alface, tomate, cebola e molho especial.",
+      "description": "Pão bola, hambúrguer, ovo, mussarela, bacon, presunto, alface, tomate, cebola e molho especial.",
       "ingredients": [
         "Pão bola",
         "Hambúrguer",
@@ -339,7 +344,8 @@
         "add-frango"
       ],
       "photoUrl": "https://images.unsplash.com/photo-1553979459-d2229ba7433b?auto=format&fit=crop&w=600&q=80",
-      "updatedAt": 1792292020016
+      "updatedAt": 1792315794139,
+      "isDrink": false
     },
     {
       "id": "lanche-x-tudo",
@@ -789,7 +795,7 @@
       "passwordSalt": "66e7e7b58d2caf60cb226a661943d2a6",
       "recoveryKey": "FABY-E28FFFA3",
       "createdAt": "2026-10-17T07:30:14.829Z",
-      "lastLoginAt": "2026-10-18T04:46:54.937Z"
+      "lastLoginAt": "2026-10-18T09:29:54.086Z"
     }
   ],
   "sessions": {
@@ -860,6 +866,34 @@
     "562bd6b7e90a3fd5a843e2d7bbcde3155926771cc55dd4961aa4558f6e4507c3": {
       "adminId": "admin-1",
       "expiresAt": 1797482814937
+    },
+    "417fc69cd83b354cd6199cd3e5c5942a8c413522fb470f125d48362f3c5d674c": {
+      "adminId": "admin-1",
+      "expiresAt": 1797494110250
+    },
+    "faby_admin_session_1792298814970": {
+      "adminId": "admin-1",
+      "expiresAt": 1794902170848
+    },
+    "82408b2476ffa2ddfe7d9e82ba46e2410eb2b3f4b1f4d230e4cc67868b966a7c": {
+      "adminId": "admin-1",
+      "expiresAt": 1797494793372
+    },
+    "1a894be5412a395a2fcf8db261e287dfeedf0d059a762f081cee70c93620e352": {
+      "adminId": "admin-1",
+      "expiresAt": 1797494822839
+    },
+    "4d85afd2c3d45bae7d4a93a6d019fbdf7732189baf694c5f5d53d290274de1df": {
+      "adminId": "admin-1",
+      "expiresAt": 1797499227531
+    },
+    "8bba147cb69a358db52c6f450c4f405790fd96308425ae349c017490db6b1d21": {
+      "adminId": "admin-1",
+      "expiresAt": 1797499693644
+    },
+    "b985f85f382c81d1f793ad2351d3fbb296fec40d1ea25df1086430e637c35dc9": {
+      "adminId": "admin-1",
+      "expiresAt": 1797499794086
     }
   }
 }

@@ -11,7 +11,7 @@ import {
   Apple,
 } from 'lucide-react';
 import type { CustomCategory } from '../types.ts';
-import { normalizeCategoryKey, parseCustomCategories } from '../utils/formatters.ts';
+import { normalizeCategoryKey, parseCustomCategories, formatCategoryLabel } from '../utils/formatters.ts';
 
 export type CategoryKey = string;
 
@@ -69,26 +69,7 @@ export function getCategoryIcon(key: string): React.ComponentType<{ className?: 
   }
 }
 
-export function formatCategoryLabel(key: string): string {
-  const clean = key.toLowerCase().trim();
-  switch (clean) {
-    case 'todos':
-      return 'Todos';
-    case 'lanches':
-      return 'Lanches';
-    case 'cuscuz':
-      return 'Cuscuz';
-    case 'sopas':
-      return 'Sopas e Canjas';
-    case 'bebidas':
-      return 'Sucos e Vitaminas';
-    default:
-      return clean
-        .split(/[-_ ]+/)
-        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-        .join(' ');
-  }
-}
+export { formatCategoryLabel } from '../utils/formatters.ts';
 
 export const CategoryNav: React.FC<CategoryNavProps> = ({
   selectedCategory,
